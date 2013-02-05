@@ -1,7 +1,10 @@
 scala-utils
 ===========
 
-Scala helper classes, utility code and other bits and pieces.
+A set of Scala helper classes, utility code and other bits and pieces rooted in the com.tomergabel.util package.
+
+Available modules:
+* [profiler](docs/profiler.md) - a simple, inline profiler with dead-simple API and minimal overhead
 
 
 License
