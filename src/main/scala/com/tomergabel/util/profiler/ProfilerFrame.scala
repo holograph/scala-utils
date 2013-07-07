@@ -20,14 +20,14 @@ package com.tomergabel.util.profiler
  * Created by tomer on 2/3/13.
  */
 class ProfilerFrame( val name: String ) {
-    private var _end: Option[ Long ] = None
-    private var _children: Seq[ ProfilerFrame ] = List.empty
-    val start = System.currentTimeMillis()
+  private var _end: Option[ Long ] = None
+  private var _children: Seq[ ProfilerFrame ] = List.empty
+  val start = System.currentTimeMillis()
 
-    def end = _end getOrElse { throw new IllegalStateException( "End called on unmarked profiler frame?" ) }
-    def elapsed = end - start
-    def children = _children
+  def end = _end getOrElse { throw new IllegalStateException( "End called on unmarked profiler frame?" ) }
+  def elapsed = end - start
+  def children = _children
 
-    private[ profiler ] def aggregate( child: ProfilerFrame* ) { _children ++= child }
-    private[ profiler ] def mark() { _end = Some( System.currentTimeMillis() ) }
+  private[ profiler ] def aggregate( child: ProfilerFrame* ) { _children ++= child }
+  private[ profiler ] def mark() { _end = Some( System.currentTimeMillis() ) }
 }

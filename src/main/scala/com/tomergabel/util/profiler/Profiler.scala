@@ -54,65 +54,65 @@ import scala.collection.mutable
  * number of implementations available out of the box, including NullProfiler and ConsoleProfiler.
  */
 trait Profiler {
-    import Profiler._
+  import Profiler._
 
-    protected def isProfilerEnabled: Boolean
-    protected def logProfilerResult( root: ProfilerFrame )
+  protected def isProfilerEnabled: Boolean
+  protected def logProfilerResult( root: ProfilerFrame )
 
-    protected def profile[ R ]( section: String )( x: => R ): R =
-        if ( !isProfilerEnabled ) x
-        else {
-            val frame = new ProfilerFrame( section )
-            push( frame )
-            try x
-            finally {
-                frame.mark()
-                pop() match {
-                    case Some( parent ) => parent aggregate frame
-                    case None => logProfilerResult( frame )
-                }
-            }
+  protected def profile[ R ]( section: String )( x: => R ): R =
+    if ( !isProfilerEnabled ) x
+    else {
+      val frame = new ProfilerFrame( section )
+      push( frame )
+      try x
+      finally {
+        frame.mark()
+        pop() match {
+          case Some( parent ) => parent aggregate frame
+          case None => logProfilerResult( frame )
         }
+      }
+    }
 
-    protected def renderProfilerResult( root: ProfilerFrame ) = Profiler.renderResult( root )
+  protected def renderProfilerResult( root: ProfilerFrame ) = Profiler.renderResult( root )
 }
 
 object Profiler {
-    // Stack management
-    private[ profiler ] val _activeStack = new ThreadLocal[ mutable.Stack[ ProfilerFrame ] ]()
-    private[ profiler ] def push( frame: ProfilerFrame ) {
-        val stack =
-            Option( _activeStack.get )
-            .getOrElse { val n = new mutable.Stack[ ProfilerFrame ](); _activeStack.set( n ); n }
-        stack.push( frame )
-    }
-    private[ profiler ] def pop(): Option[ ProfilerFrame ] = {
-        val stack =
-            Option( _activeStack.get )
-            .getOrElse { throw new IllegalStateException( "Pop called on an empty profiler stack?" ) }
-        stack.pop()
-        stack.headOption
-    }
+  // Stack management
+  private[ profiler ] val _activeStack = new ThreadLocal[ mutable.Stack[ ProfilerFrame ] ]()
+  private[ profiler ] def push( frame: ProfilerFrame ) {
+    val stack =
+      Option( _activeStack.get )
+        .getOrElse { val n = new mutable.Stack[ ProfilerFrame ](); _activeStack.set( n ); n }
+    stack.push( frame )
+  }
+  private[ profiler ] def pop(): Option[ ProfilerFrame ] = {
+    val stack =
+      Option( _activeStack.get )
+        .getOrElse { throw new IllegalStateException( "Pop called on an empty profiler stack?" ) }
+    stack.pop()
+    stack.headOption
+  }
 
-    def renderResult( root: ProfilerFrame ) = {
-        val buffer = new mutable.StringBuilder( 200 )   // TODO tune?
+  def renderResult( root: ProfilerFrame ) = {
+    val buffer = new mutable.StringBuilder( 200 )   // TODO tune?
 
-        /*
-            Desired sample output:
-            root (20000ms)
-              |- call1 (15000ms)
-              |- call2 (3000ms)
-              |    |- calla (1000ms)
-              |    |- callb (2000ms)
-              |- call3 (2000ms)
-        */
-        def render( frame: ProfilerFrame, indent: Int ) {
-            for ( _ <- 0 until indent - 1 ) buffer append "  |  "
-            if ( indent > 0 ) buffer append "  |- "
-            buffer append frame.name append " (" append frame.elapsed append "ms)\n"
-            frame.children foreach { render( _, indent + 1 ) }
-        }
-        render( root, 0 )
-        buffer.toString()
+    /*
+        Desired sample output:
+        root (20000ms)
+          |- call1 (15000ms)
+          |- call2 (3000ms)
+          |    |- calla (1000ms)
+          |    |- callb (2000ms)
+          |- call3 (2000ms)
+    */
+    def render( frame: ProfilerFrame, indent: Int ) {
+      for ( _ <- 0 until indent - 1 ) buffer append "  |  "
+      if ( indent > 0 ) buffer append "  |- "
+      buffer append frame.name append " (" append frame.elapsed append "ms)\n"
+      frame.children foreach { render( _, indent + 1 ) }
     }
+    render( root, 0 )
+    buffer.toString()
+  }
 }
