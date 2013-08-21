@@ -28,6 +28,8 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <scala.version>2.10.2</scala.version>
+        <scala.tools.version>2.10</scala.tools.version>
     </properties>
 
     <repositories>
@@ -61,6 +63,7 @@
                         <jvmArg>-Xms64m</jvmArg>
                         <jvmArg>-Xmx1024m</jvmArg>
                     </jvmArgs>
+                    <addScalacArgs>-Ymacro-debug-lite</addScalacArgs>
                 </configuration>
             </plugin>
 
@@ -98,12 +101,19 @@
         <dependency>
             <groupId>org.scala-lang</groupId>
             <artifactId>scala-library</artifactId>
-            <version>2.10.2</version>
+            <version>${scala.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.scala-lang</groupId>
+            <artifactId>scala-reflect</artifactId>
+            <version>${scala.version}</version>
+        </dependency>
+
+        <dependency>
             <groupId>org.scalatest</groupId>
-            <artifactId>scalatest_2.10</artifactId>
+            <artifactId>scalatest_${scala.tools.version}</artifactId>
             <version>1.9.1</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>
