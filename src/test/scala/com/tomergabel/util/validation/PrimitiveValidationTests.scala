@@ -2,9 +2,6 @@ package com.tomergabel.util.validation
 
 import org.scalatest.WordSpec
 import org.scalatest.matchers._
-import com.tomergabel.util.validation.PrimitiveValidationTests.Person
-import com.tomergabel.util.validation.Failure
-import com.tomergabel.util.validation.PrimitiveValidationTests.Classroom
 
 /**
 * Created by tomer on 8/7/13.
@@ -17,11 +14,11 @@ object PrimitiveValidationTests {
   case class Classroom( teacher: Person, students: Seq[ Person ] )
 
   implicit val personValidator = validator[ Person ](
-    _.firstName is notEmpty,
-    _.lastName is notEmpty
+    Prefixer.prefix( _.firstName is notEmpty ),
+    Prefixer.prefix( _.lastName is notEmpty )
   )
 
-  implicit val classValidator = validator[ Classroom ]( _.students has size > 0 )
+  implicit val classValidator = validator[ Classroom ]( Prefixer.prefix( _.students has size > 0 ) )
 }
 
 import PrimitiveValidationTests._
@@ -67,11 +64,11 @@ class PrimitiveValidationTests extends WordSpec with ShouldMatchers {
   "personValidator" should {
     "fail a person with no first name" in {
       val result = validate( personWithNoFirstName )
-      result should failWith( "must not be empty" )
+      result should failWith( "firstName must not be empty" )
     }
     "fail a person with no last name" in {
       val result = validate( personWithNoLastName )
-      result should be( aFailure )
+      result should failWith( "lastName must not be empty" )
     }
     "pass a person with a full name" in {
       val result = validate( legitPerson1 )
@@ -79,7 +76,7 @@ class PrimitiveValidationTests extends WordSpec with ShouldMatchers {
     }
     "fail a classroom with no students" in {
       val result = validate( classWithNoStudents )
-      result should failWith( "of size 0, expected more than 0" )
+      result should failWith( "students has size 0, expected more than 0" )
     }
     "fail a classroom with an invalid teacher" in pending
     "fail a classroom with an invalid student" in pending

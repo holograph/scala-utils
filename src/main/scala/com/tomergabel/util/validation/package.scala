@@ -43,7 +43,7 @@ package object validation {
     type HasSize = { def size: Int }
     class Size[ T <: HasSize ] {
       def >( other: Int ) = new Validator[ T ] {
-        def apply( x: T ) = result( x.size > other, Violation( s"of size ${x.size}, expected more than $other", x ) )
+        def apply( x: T ) = result( x.size > other, Violation( s"has size ${x.size}, expected more than $other", x ) )
       }
     }
 
@@ -57,7 +57,7 @@ package object validation {
 
     class Or[ T ]( predicates: Validator[ T ]* ) extends Validator[ T ] {
       def apply( x: T ) = predicates.map { _ apply x }.fold( Success ) { _ or _ }
-      // TOOD rethink resulting violation
+      // TODO rethink resulting violation
     }
 
     class Fail[ T ]( message: => String ) extends Validator[ T ] {
@@ -70,7 +70,9 @@ package object validation {
 
     def validator[ T ]( v: Validator[ T ]* ): Validator[ T ] = new And( v:_* )
 
-    implicit class Contextualize[ U ]( value: U ) {
+//    def validator[ T ]( v: Validator[ T ]* ): Validator[ T ] = new And( ( v map Prefixer.prefix ):_* )
+
+    implicit class Contextualizer[ U ]( value: U ) {
       def is( validator: Validator[ U ] ) = validator( value )
       def has( validator: Validator[ U ] ) = validator( value )
     }

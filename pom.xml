@@ -63,6 +63,7 @@
                         <jvmArg>-Xms64m</jvmArg>
                         <jvmArg>-Xmx1024m</jvmArg>
                     </jvmArgs>
+                    <!--<addScalacArgs>-Xprint:typer</addScalacArgs>-->
                     <addScalacArgs>-Ymacro-debug-lite</addScalacArgs>
                 </configuration>
             </plugin>
@@ -114,6 +115,12 @@
             <artifactId>scalatest_${scala.tools.version}</artifactId>
             <version>1.9.1</version>
             <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.scala-lang</groupId>
+                    <artifactId>scala-library</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
     </dependencies>
 </project>
