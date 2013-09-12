@@ -1,22 +1,36 @@
+/*
+   Copyright 2013 Tomer Gabel
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+   Created by tomer on 10/10/11.
+*/
+
 package com.tomergabel.util.metrics
 
 import java.lang.Thread
 import scala.util.Random
 import java.nio.channels.DatagramChannel
 import java.nio.ByteBuffer
-import actors.threadpool.{TimeoutException, TimeUnit, Callable, Executors}
-import org.scalatest.matchers.{MatchResult, BeMatcher, ShouldMatchers}
-import org.scalatest.{Suites, fixture}
-
-/**
- * Created by tomer on 10/10/11.
- */
+import org.scalatest.matchers.{MatchResult, BeMatcher}
+import org.scalatest.{Matchers, Suites, fixture}
+import java.util.concurrent.{TimeoutException, TimeUnit, Callable, Executors}
 
 import StatsdClientTests._
 
 class StatsdClientTests extends Suites( new ServerlessTests, new ServerTests )
 
-private class ServerlessTests extends org.scalatest.FlatSpec with ShouldMatchers {
+private class ServerlessTests extends org.scalatest.FlatSpec with Matchers {
   val client = new StatsdClient()
   import client._
 
@@ -79,30 +93,30 @@ private class ServerlessTests extends org.scalatest.FlatSpec with ShouldMatchers
   }
 }
 
-private class ServerTests extends StatsdClientTestSuite with ShouldMatchers {
+private class ServerTests extends StatsdClientTestSuite with Matchers {
   "StatsdClient.counter" should "issue correct command on increment" in { listener => import listener._
-    listen { counter( "test.ham" ).increment() } should be === "test.ham:1|c"
+    listen { counter( "test.ham" ).increment() } shouldEqual "test.ham:1|c"
   }
   it should "issue correct command on decrement" in { listener => import listener._
-    listen { counter( "test.eggs" ).decrement() } should be === "test.eggs:-1|c"
+    listen { counter( "test.eggs" ).decrement() } shouldEqual "test.eggs:-1|c"
   }
   it should "issue correct command on add" in { listener => import listener._
-    listen { counter( "test.eggs" ).add( 5 ) } should be === "test.eggs:5|c"
+    listen { counter( "test.eggs" ).add( 5 ) } shouldEqual "test.eggs:5|c"
   }
   it should "issue correct command on subtract" in { listener => import listener._
-    listen { counter( "test.eggs" ).subtract( 5 ) } should be === "test.eggs:-5|c"
+    listen { counter( "test.eggs" ).subtract( 5 ) } shouldEqual "test.eggs:-5|c"
   }
 
   // TODO add sample rate tests --TG
 
   "StatsdClient.emitTime" should "issue the correct command" in { listener => import listener._
-    listen { emitTime( "test.gnarly", 20 ) } should be === "test.gnarly:20|ms"
+    listen { emitTime( "test.gnarly", 20 ) } shouldEqual "test.gnarly:20|ms"
   }
 
   "StatsdClient.time" should "measure " + halfTime + "ms and issue correct command" in { listener => import listener._
     listen {
       time( "test.foo" ) { Thread.sleep( halfTime ) }
-    } should be( timed( "test.foo", halfTime ) )
+    } shouldBe timed( "test.foo", halfTime )
   }
   it should "ignore errors on a timed section by default, and not issue a command" in { listener => import listener._
     expectNothing {
@@ -122,7 +136,7 @@ private class ServerTests extends StatsdClientTestSuite with ShouldMatchers {
           throw new Exception()
         }
       } should produce[ Exception ]
-    } should be( timed( "test.baz", halfTime ) )
+    } shouldBe timed( "test.baz", halfTime )
   }
 }
 
@@ -151,7 +165,7 @@ object StatsdClientTests {
     private val client = new StatsdClient( "localhost", port )
 
     def listen( x: => Unit ) = {
-      val future = worker.submit( new Callable {
+      val future = worker.submit( new Callable[ String ] {
         def call() = {
           buffer.clear()
           channel.receive( buffer )
@@ -161,11 +175,11 @@ object StatsdClientTests {
         }
       } )
       x
-      future.get( testTimeout, TimeUnit.MILLISECONDS ).asInstanceOf[ String ]
+      future.get( testTimeout, TimeUnit.MILLISECONDS )
     }
 
     def expectNothing( x: => Unit ) {
-      import ShouldMatchers._
+      import Matchers._
       evaluating { this.listen( x ) } should produce [ TimeoutException ]
     }
 
@@ -183,7 +197,7 @@ object StatsdClientTests {
 
   trait StatsdClientTestSuite extends fixture.FlatSpec {
     type FixtureParam = TestHarness
-    protected def withFixture( test: OneArgTest ) {
+    protected def withFixture( test: OneArgTest ) = {
       val listener = new TestHarness
       try test( listener )
       finally {
@@ -198,12 +212,12 @@ object StatsdClientTests {
     def apply( left: String ) = {
       timerRegex.findFirstMatchIn( left ) match {
         case None =>
-          MatchResult( matches = false, failureMessage = "Not a timer: " + left, negatedFailureMessage = "A timer: " + left )
+          MatchResult( matches = false, rawFailureMessage = "Not a timer: " + left, rawNegatedFailureMessage = "A timer: " + left )
         case Some( m ) if m.group( 1 ) != key =>
-          MatchResult( matches = false, failureMessage = "Incorrect timed section key: " + left, negatedFailureMessage = "Correct timed section key: " + left )
+          MatchResult( matches = false, rawFailureMessage = "Incorrect timed section key: " + left, rawNegatedFailureMessage = "Correct timed section key: " + left )
         case Some( m ) if m.group( 2 ).toInt < ( howLong - timerTolerance ) || m.group( 2 ).toInt > ( howLong + timerTolerance ) =>
-          MatchResult( matches = false, failureMessage = "Timed section outside allowed tolerance: " + left, negatedFailureMessage = "Timed section within allowed tolerance: " + left )
-        case _ => MatchResult( matches = true, failureMessage = "", negatedFailureMessage = "" )
+          MatchResult( matches = false, rawFailureMessage = "Timed section outside allowed tolerance: " + left, rawNegatedFailureMessage = "Timed section within allowed tolerance: " + left )
+        case _ => MatchResult( matches = true, rawFailureMessage = "", rawNegatedFailureMessage = "" )
       }
     }
   }
