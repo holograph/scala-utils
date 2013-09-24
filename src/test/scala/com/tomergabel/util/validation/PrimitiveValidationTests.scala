@@ -13,12 +13,16 @@ object PrimitiveValidationTests {
   case class Person( firstName: String, lastName: String )
   case class Classroom( teacher: Person, students: Seq[ Person ] )
 
-  implicit val personValidator = validator[ Person ](
-    Prefixer.prefix( _.firstName is notEmpty ),
-    Prefixer.prefix( _.lastName is notEmpty )
-  )
+  implicit val personValidator = validator[ Person ] { p =>
+    p.firstName is notEmpty
+    p.lastName is notEmpty
+  }
 
-  implicit val classValidator = validator[ Classroom ]( Prefixer.prefix( _.students has size > 0 ) )
+  implicit val classValidator = validator[ Classroom ] { c =>
+    c.teacher is valid
+    allOf( c.students ) are valid
+    c.students has size > 0
+  }
 }
 
 import PrimitiveValidationTests._

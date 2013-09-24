@@ -1,5 +1,8 @@
 package com.tomergabel.util
 
+import scala.language.experimental.macros
+
+
 /**
  * Created by tomer on 8/7/13.
  */
@@ -65,16 +68,113 @@ package object validation {
     }
   }
 
+
   object builder {
     import combinators._
 
-    def validator[ T ]( v: Validator[ T ]* ): Validator[ T ] = new And( v:_* )
+    private class Wrapper[ T, U ]( prefix: String, extractor: T => U, validator: Validator[ U ] ) extends Validator[ T ] {
+      def apply( v: T ) = validator( extractor( v ) ) match {
+        case Success => Success
+        case Failure( violations ) =>
+          Failure( violations map { f => f.copy( constraint = prefix + " " + f.constraint ) } )
+      }
+    }
+
+    def validator_impl[ T : c.WeakTypeTag ]( c: scala.reflect.macros.Context )
+                                           ( v: c.Expr[ T => Unit ] ): c.Expr[ Validator[ T ] ] = {
+      import c.universe._
+
+      // Extract validator body --
+      val Function( prototype, impl ) = v.tree
+
+      // Extract validation statements --
+      case class Subvalidator[ U ]( description: String, extractor: Expr[ T => U ], validation: Expr[ Validator[ U ] ] )
+
+      object ValidatorApplication {
+
+        def renderTreeSource( t: Tree ) = ( t.pos match {
+          // Shamelessly stolen from Expecty's RecorderMacro.
+          // https://github.com/pniederw/expecty/blob/master/src/main/scala/org/expecty/RecorderMacro.scala
+          case p: Position => p.lineContent
+          case p: scala.reflect.internal.util.RangePosition => p.lineContent.slice( p.start, p.end )
+        } ).trim
+
+        def extractSubvalidator( t: Tree ) = {
+          // TODO cleanup
+          val term = typeOf[ Contextualizer[_] ].typeSymbol.name.toTermName
+          var expr: Tree = null
+          val lookup = new Traverser {
+            override def traverse( tree: Tree ) {
+              tree match {
+                case Apply( TypeApply( Select( _, `term` ), _ ), e :: Nil ) => expr = e
+                case _ => super.traverse( tree )
+              }
+            }
+          }
+          lookup.traverse( t )
+          expr
+        }
+
+        def rewriteSubvalidatorAsExtractor[ U : WeakTypeTag ]( t: Expr[ U ] ): Expr[ T => U ] =
+          c.Expr( Function( prototype, t.tree ) )( weakTypeTag[ T => U ] )
+
+        def unapply( expr: Tree ): Option[ Subvalidator[_] ] = expr match {
+          case t if t.tpe <:< c.typeOf[ Validator[_] ] =>
+            val subvalidator = extractSubvalidator( expr )
+            val ttag = c.WeakTypeTag( subvalidator.tpe )
+            val subexpr = c.Expr( subvalidator )( ttag )
+            val extractor = rewriteSubvalidatorAsExtractor( subexpr )( ttag )
+            Some( Subvalidator(
+              description = renderTreeSource( subvalidator ),
+              extractor = extractor,
+              validation = subexpr
+            ) )
+
+          case _ => None
+        }
+      }
+
+      def findSubvalidators( t: Tree ): List[ Subvalidator[_] ] = t match {
+        case Block( stats, expr ) => stats.flatMap( findSubvalidators(_) ) ++ findSubvalidators( expr )
+        case ValidatorApplication( validator ) => validator :: Nil
+        case Literal( Constant(()) ) => Nil   // Ignored terminator
+        case _ => c.abort( t.pos, s"Unexpected node $t:\n\ttpe=${t.tpe}\n\traw=${showRaw(t)}" )
+      }
+
+      val subvalidators = findSubvalidators( impl )
+
+      // Rewrite expressions a validation chain --
+
+      val rewritten: List[ Expr[ Validator[ T ] ] ]  =
+        subvalidators map { t => reify {
+          new Wrapper[ T, _ ]( t.description, t.extractor.splice, t.validation.splice )
+        } }
+
+      reify {
+        new And( rewritten:_* )
+      }
+    }
+
+/*
+Example 1:
+scala:
+  boilerplate: Expr(Function(List(ValDef(Modifiers(PARAM), newTermName("p"), TypeTree(), EmptyTree)), Block(List(
+  statements:
+    Apply(Select(Apply(TypeApply(Select(Select(Select(This(newTypeName("validation")), com.tomergabel.util.validation.package), com.tomergabel.util.validation.builder), newTermName("Contextualizer")), List(TypeTree())), List(Select(Ident(newTermName("p")), newTermName("firstName")))), newTermName("is")), List(TypeApply(Select(Select(Select(This(newTypeName("validation")), com.tomergabel.util.validation.package), com.tomergabel.util.validation.builder), newTermName("notEmpty")), List(TypeTree()))))), Block(List(Apply(Select(Apply(TypeApply(Select(Select(Select(This(newTypeName("validation")), com.tomergabel.util.validation.package), com.tomergabel.util.validation.builder), newTermName("Contextualizer")), List(TypeTree())),
+    List(Select(Ident(newTermName("p")), newTermName("lastName")))), newTermName("is")), List(TypeApply(Select(Select(Select(This(newTypeName("validation")), com.tomergabel.util.validation.package), com.tomergabel.util.validation.builder), newTermName("notEmpty")), List(TypeTree()))))), Literal(Constant(()))))))
+
+scala: Expr(Function(List(ValDef(Modifiers(PARAM), newTermName("c"), TypeTree(), EmptyTree)),
+Block(List(Apply(Select(Apply(TypeApply(Select(Select(Select(This(newTypeName("validation")), com.tomergabel.util.validation.package), com.tomergabel.util.validation.builder), newTermName("Contextualizer")), List(TypeTree())), List(Select(Ident(newTermName("c")), newTermName("teacher")))), newTermName("is")), List(Apply(TypeApply(Select(Select(Select(This(newTypeName("validation")), com.tomergabel.util.validation.package), com.tomergabel.util.validation.builder), newTermName("valid")), List(TypeTree())), List(Select(This(newTypeName("PrimitiveValidationTests")), newTermName("personValidator")))))), Apply(Select(Apply(TypeApply(Select(Select(Select(This(newTypeName("validation")), com.tomergabel.util.validation.package), com.tomergabel.util.validation.builder), newTermName("allOf")), List(TypeTree())), List(Select(Ident(newTermName("c")), newTermName("students")))), newTermName("are")), List(Apply(TypeApply(Select(Select(Select(This(newTypeName("validation")), com.tomergabel.util.validation.package), com.tomergabel.util.validation.builder), newTermName("valid")), List(TypeTree())), List(Select(This(newTypeName("PrimitiveValidationTests")), newTermName("personValidator"))))))), Block(List(Apply(Select(Apply(TypeApply(Select(Select(Select(This(newTypeName("validation")), com.tomergabel.util.validation.package), com.tomergabel.util.validation.builder), newTermName("Contextualizer")), List(TypeTree())), List(Select(Ident(newTermName("c")), newTermName("students")))), newTermName("has")), List(Apply(Select(TypeApply(Select(Select(Select(This(newTypeName("validation")), com.tomergabel.util.validation.package), com.tomergabel.util.validation.builder), newTermName("size")), List(TypeTree())), newTermName("$greater")), List(Literal(Constant(0))))))), Literal(Constant(()))))))
+ */
+
+
+    def validator[ T ]( v: T => Unit ): Validator[ T ] = macro validator_impl[ T ]
 
 //    def validator[ T ]( v: Validator[ T ]* ): Validator[ T ] = new And( ( v map Prefixer.prefix ):_* )
 
     implicit class Contextualizer[ U ]( value: U ) {
-      def is( validator: Validator[ U ] ) = validator( value )
-      def has( validator: Validator[ U ] ) = validator( value )
+      def is( validator: Validator[ U ] ) = validator
+      def has( validator: Validator[ U ] ) = validator
     }
     implicit class ExtendValidator[ T ]( validator: Validator[ T ] ) {
       def and( other: Validator[ T ] ) = new And( validator, other ) // TODO shortcut multiple ANDs
@@ -84,5 +184,14 @@ package object validation {
     def empty[ T <: HasEmpty ] = new Empty[ T ]
     def notEmpty[ T <: HasEmpty ] = new NotEmpty[ T ]
     def size[ T <: HasSize ] = new Size[ T ]
+    def valid[ T ]( implicit validator: Validator[ T ] ) = validator
+
+    def aggregate[ T ]( it: Traversable[ T ], aggregator: Traversable[ Result ] => Result ) = new {
+      def are( validator: Validator[ T ] ) = new Validator[ Traversable[ T ] ] {
+        def apply( c: Traversable[ T ] ) = aggregator( c map validator )
+      }
+    }
+
+    def allOf[ T ]( it: Traversable[ T ] ) = aggregate( it, r => ( r fold Success )( _ and _ ) )
   }
 }
