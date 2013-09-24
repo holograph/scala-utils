@@ -66,6 +66,10 @@ package object validation {
     class Fail[ T ]( message: => String ) extends Validator[ T ] {
       def apply( x: T ) = result( test = false, Violation( message, x ) )
     }
+
+    class NilValidator[ T ] extends Validator[ T ] {
+      def apply( x: T ) = Success
+    }
   }
 
 
@@ -79,7 +83,6 @@ package object validation {
           Failure( violations map { f => f.copy( constraint = prefix + " " + f.constraint ) } )
       }
     }
-
     def validator_impl[ T : c.WeakTypeTag ]( c: scala.reflect.macros.Context )
                                            ( v: c.Expr[ T => Unit ] ): c.Expr[ Validator[ T ] ] = {
       import c.universe._
@@ -88,9 +91,13 @@ package object validation {
       val Function( prototype, impl ) = v.tree
 
       // Extract validation statements --
-      case class Subvalidator[ U ]( description: String, extractor: Expr[ T => U ], validation: Expr[ Validator[ U ] ] )
+      case class Subvalidator[ U ]( description: String,
+                                    extractor: Expr[ T => U ],
+                                    validation: Expr[ Validator[ U ] ] )
 
       object ValidatorApplication {
+        val validatorType = typeOf[ Validator[_] ]
+        val contextualizerTerm = typeOf[ Contextualizer[_] ].typeSymbol.name.toTermName
 
         def renderTreeSource( t: Tree ) = ( t.pos match {
           // Shamelessly stolen from Expecty's RecorderMacro.
@@ -101,12 +108,11 @@ package object validation {
 
         def extractSubvalidator( t: Tree ) = {
           // TODO cleanup
-          val term = typeOf[ Contextualizer[_] ].typeSymbol.name.toTermName
           var expr: Tree = null
           val lookup = new Traverser {
             override def traverse( tree: Tree ) {
               tree match {
-                case Apply( TypeApply( Select( _, `term` ), _ ), e :: Nil ) => expr = e
+                case Apply( TypeApply( Select( _, term ), _ ), e :: Nil ) => expr = e
                 case _ => super.traverse( tree )
               }
             }
@@ -119,16 +125,12 @@ package object validation {
           c.Expr( Function( prototype, t.tree ) )( weakTypeTag[ T => U ] )
 
         def unapply( expr: Tree ): Option[ Subvalidator[_] ] = expr match {
-          case t if t.tpe <:< c.typeOf[ Validator[_] ] =>
+          case t if t.tpe <:< validatorType =>
             val subvalidator = extractSubvalidator( expr )
             val ttag = c.WeakTypeTag( subvalidator.tpe )
             val subexpr = c.Expr( subvalidator )( ttag )
             val extractor = rewriteSubvalidatorAsExtractor( subexpr )( ttag )
-            Some( Subvalidator(
-              description = renderTreeSource( subvalidator ),
-              extractor = extractor,
-              validation = subexpr
-            ) )
+            Some( Subvalidator( renderTreeSource( subvalidator ), extractor, subexpr ) )
 
           case _ => None
         }
@@ -143,16 +145,23 @@ package object validation {
 
       val subvalidators = findSubvalidators( impl )
 
+      subvalidators.zipWithIndex foreach { case ( sv, i ) =>
+        c.info( sv.validation.tree.pos, s"Found validator '${sv.description}' for tree ${sv.validation}", false )
+      }
+
       // Rewrite expressions a validation chain --
 
-      val rewritten: List[ Expr[ Validator[ T ] ] ]  =
-        subvalidators map { t => reify {
-          new Wrapper[ T, _ ]( t.description, t.extractor.splice, t.validation.splice )
-        } }
+//      def wrapperFor[ U ]( prefix: String, extractor: T => U, validator: Validator[ U ] ) =
+//        new Wrapper[ T, U ]( prefix, extractor, validator )
+//
+//      val rewritten: List[ Expr[ Validator[ T ] ] ]  =
+//        subvalidators map { t => reify { wrapperFor( t.description, t.extractor.splice, t.validation.splice ) } }
+//
+//      reify {
+//        new And( rewritten:_* )
+//      }
 
-      reify {
-        new And( rewritten:_* )
-      }
+      reify { new NilValidator }
     }
 
 /*
