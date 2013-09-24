@@ -76,13 +76,6 @@ package object validation {
   object builder {
     import combinators._
 
-    private class Wrapper[ T, U ]( prefix: String, extractor: T => U, validator: Validator[ U ] ) extends Validator[ T ] {
-      def apply( v: T ) = validator( extractor( v ) ) match {
-        case Success => Success
-        case Failure( violations ) =>
-          Failure( violations map { f => f.copy( constraint = prefix + " " + f.constraint ) } )
-      }
-    }
     def validator_impl[ T : c.WeakTypeTag ]( c: scala.reflect.macros.Context )
                                            ( v: c.Expr[ T => Unit ] ): c.Expr[ Validator[ T ] ] = {
       import c.universe._
@@ -106,7 +99,7 @@ package object validation {
           case p: scala.reflect.internal.util.RangePosition => p.lineContent.slice( p.start, p.end )
         } ).trim
 
-        def extractSubvalidator( t: Tree ) = {
+        def extractObjectUnderValidation( t: Tree ) = {
           // TODO cleanup
           var expr: Tree = null
           val lookup = new Traverser {
@@ -118,6 +111,7 @@ package object validation {
             }
           }
           lookup.traverse( t )
+          assert( expr != null )
           expr
         }
 
@@ -126,11 +120,13 @@ package object validation {
 
         def unapply( expr: Tree ): Option[ Subvalidator[_] ] = expr match {
           case t if t.tpe <:< validatorType =>
-            val subvalidator = extractSubvalidator( expr )
-            val ttag = c.WeakTypeTag( subvalidator.tpe )
-            val subexpr = c.Expr( subvalidator )( ttag )
-            val extractor = rewriteSubvalidatorAsExtractor( subexpr )( ttag )
-            Some( Subvalidator( renderTreeSource( subvalidator ), extractor, subexpr ) )
+            val ouv = extractObjectUnderValidation( expr )
+            val ouvttag = c.WeakTypeTag( ouv.tpe )
+            val ouvexpr = c.Expr( ouv )( ouvttag )
+            val extractor = rewriteSubvalidatorAsExtractor( ouvexpr )( ouvttag )
+            val svttag = c.WeakTypeTag( appliedType( validatorType.typeConstructor, ouv.tpe :: Nil ) )
+            val sv = c.Expr( expr )( svttag )
+            Some( Subvalidator( /*renderTreeSource( ouv )*/ ouv.toString(), extractor, sv ) )
 
           case _ => None
         }
@@ -145,23 +141,40 @@ package object validation {
 
       val subvalidators = findSubvalidators( impl )
 
-      subvalidators.zipWithIndex foreach { case ( sv, i ) =>
-        c.info( sv.validation.tree.pos, s"Found validator '${sv.description}' for tree ${sv.validation}", false )
-      }
-
       // Rewrite expressions a validation chain --
 
-//      def wrapperFor[ U ]( prefix: String, extractor: T => U, validator: Validator[ U ] ) =
-//        new Wrapper[ T, U ]( prefix, extractor, validator )
-//
-//      val rewritten: List[ Expr[ Validator[ T ] ] ]  =
-//        subvalidators map { t => reify { wrapperFor( t.description, t.extractor.splice, t.validation.splice ) } }
-//
-//      reify {
-//        new And( rewritten:_* )
-//      }
+      def rewriteOne[ U ]( sv: Subvalidator[ U ] ): Expr[ Validator[ T ] ] = {
+        c.info( sv.validation.tree.pos, s"Found validation statement '${sv.description}' for tree ${sv.validation}", force = false )
+        val descExpr = c.Expr[ String ]( Literal( Constant( sv.description ) ) )
+        val rewrite = reify {
+          new Validator[ T ] {
+            def apply( v: T ) = sv.validation.splice.apply( sv.extractor.splice( v ) ) match {
+              case Success => Success
+              case Failure( violations ) =>
+                Failure( violations map { f => f.copy( constraint = descExpr.splice + " " + f.constraint ) } )
+            }
+          }
+        }
+/*
+    /*private*/ class Wrapper[ T, U ]( prefix: String, extractor: T => U, validator: Validator[ U ] ) extends Validator[ T ] {
+      def apply( v: T ) = validator( extractor( v ) ) match {
+        case Success => Success
+        case Failure( violations ) =>
+          Failure( violations map { f => f.copy( constraint = prefix + " " + f.constraint ) } )
+      }
+    }
+//          reify { new Wrapper[ T, U ]( descExpr.splice, sv.extractor.splice, sv.validation.splice ) }
+ */
+        c.info( sv.validation.tree.pos, "Rewritten as: " + show( rewrite ), false )
+        rewrite
+      }
+      val rewritten: List[ Expr[ Validator[ T ] ] ] = subvalidators map { rewriteOne(_) }
+      val validators: Expr[ Seq[ Validator[ T ] ] ] = c.Expr[ Seq[ Validator[ T ] ] ](
+        Apply( Select( Ident( newTermName( "Seq" ) ), newTermName( "apply" ) ), rewritten map { _.tree } )
+      )
+      reify { new And( validators.splice :_* ) }
 
-      reify { new NilValidator }
+//      reify { new NilValidator }
     }
 
 /*

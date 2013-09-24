@@ -66,7 +66,7 @@
                     <source>1.7</source>
                     <target>1.7</target>
                     <!--<addScalacArgs>-Xprint:typer</addScalacArgs>-->
-                    <!--<addScalacArgs>-Ymacro-debug-lite</addScalacArgs>-->
+                    <addScalacArgs>-Ymacro-debug-lite</addScalacArgs>
                 </configuration>
             </plugin>
 
