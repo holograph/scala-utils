@@ -20,8 +20,8 @@ object PrimitiveValidationTests {
 
   implicit val classValidator = validator[ Classroom ] { c =>
     c.teacher is valid
-    allOf( c.students ) are valid
-    c.students has size > 0
+//    c.students.are.all( valid )
+//    c.students has size > 0
   }
 }
 
