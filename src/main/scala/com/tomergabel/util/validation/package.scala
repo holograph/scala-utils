@@ -94,7 +94,7 @@ package object validation {
         val function1Type = typeOf[ Function1[_,_] ]
         val contextualizerTerm = typeOf[ Contextualizer[_] ].typeSymbol.name.toTermName
 
-        def patternMatchOn[ R ]( tree: Tree )( pattern: PartialFunction[ Tree, R ] ): Option[ R ] = {
+        def extractFromPattern[ R ]( tree: Tree )( pattern: PartialFunction[ Tree, R ] ): Option[ R ] = {
           var found: Option[ R ] = None
           new Traverser {
             override def traverse( subtree: Tree ) {
@@ -107,14 +107,30 @@ package object validation {
           found
         }
 
+        def transformByPattern( tree: Tree )( pattern: PartialFunction[ Tree, Tree ] ): Tree =
+          new Transformer {
+            override def transform( subtree: Tree ): Tree =
+              if ( pattern isDefinedAt subtree ) pattern.apply( subtree ) else super.transform( subtree )
+          }.transform( tree )
+
         def extractObjectUnderValidation( t: Tree ) =
-          patternMatchOn( t ) {
+          extractFromPattern( t ) {
             case Apply( TypeApply( Select( _, `contextualizerTerm` ), _ ), e :: Nil ) => e
           } getOrElse
             c.abort( t.pos, s"Failed to extract object under validation from tree $t (raw=${showRaw(t)})" )
 
         def rewriteSubvalidatorAsExtractor[ U : WeakTypeTag ]( t: Expr[ U ] ): Expr[ T => U ] =
           c.Expr( Function( prototype, t.tree ) )( weakTypeTag[ T => U ] )
+
+        def rewriteContextExpressionAsValidator[ U ]( vtt: WeakTypeTag[ U ] )( ouvtpe: Type, expr: Tree ) = {
+          val paraName = newTermName( "v" )
+          val para = ValDef( NoMods, paraName, TypeTree( ouvtpe ), TypeTree() )
+          val impl = transformByPattern( expr ) {
+            case Apply( t @ TypeApply( Select( _, `contextualizerTerm` ), _ ), e :: Nil ) =>
+                 Apply( t, Ident( paraName ) :: Nil )
+          }
+          c.Expr( Function( para :: Nil, Apply( impl, Ident( paraName ) :: Nil ) ) )( vtt )
+        }
 
         def unapply( expr: Tree ): Option[ Subvalidator[_] ] = expr match {
           case t if t.tpe <:< validatorType =>
@@ -124,7 +140,7 @@ package object validation {
             val ouvexpr = c.Expr( ouv )( ouvttag )
             val extractor = rewriteSubvalidatorAsExtractor( ouvexpr )( ouvttag )
             val svttag = c.WeakTypeTag( t.tpe ) //appliedType( validatorType.typeConstructor, ouv.tpe :: Nil ) )
-            val sv = c.Expr( expr )( svttag )
+            val sv = rewriteContextExpressionAsValidator( svttag )( ouvtpe, expr ) //c.Expr( expr )( svttag )
             c.info( ouv.pos, s"""
               |Found subvalidator:
               |  ouv=$ouv
@@ -157,10 +173,9 @@ package object validation {
         val descExpr = c.Expr[ String ]( Literal( Constant( sv.description ) ) )
 
         val applydef = {
-          val applypara = newTermName( "v" )
-          //            def apply( v: T ) = sv.validation.splice.apply( extractor( v ) ) match {
-
-          val applysel = Apply( sv.validation.tree, Apply( sv.extractor.tree, Ident( applypara ) :: Nil ) :: Nil )
+          val Function( _, extractorImpl ) = sv.extractor.tree
+          val svdef = ValDef( NoMods, newTermName( "sv" ), TypeTree( sv.validation.tree.tpe ), sv.validation.tree )
+          val applysel = Apply( Ident( svdef.name ), extractorImpl :: Nil )
 
           val successCase = CaseDef( Ident( newTermName( "Success" ) ), EmptyTree, Ident( newTermName( "Success" ) ) )
           val failCase = {
@@ -174,14 +189,19 @@ package object validation {
               vappl.tree
             )
           }
-          val applyimpl = Match( applysel, successCase :: failCase :: Nil )
+
+          val applyimpl = Block(
+            svdef :: Nil,
+            Match( applysel, successCase :: failCase :: Nil )
+          )
 
           DefDef( NoMods, newTermName( "apply" ), Nil,
-            List( ValDef( NoMods, applypara, TypeTree( weakTypeOf[ T ] ), EmptyTree ) :: Nil ),
-            EmptyTree, applyimpl )
+            List( prototype ),
+//            List( ValDef( NoMods, applypara, TypeTree( weakTypeOf[ T ] ), EmptyTree ) :: Nil ),
+            TypeTree(), applyimpl )
         }
 
-        val anon = c.fresh()
+        val anon = newTypeName( c.fresh() )
         val cdef = ClassDef( NoMods, anon, Nil,
           Template( TypeTree( weakTypeOf[ Validator[ T ] ] ) :: Nil, emptyValDef, applydef :: Nil ) )
         val ctor = Apply( Select( New( Ident( anon ) ), nme.CONSTRUCTOR ), List.empty )
@@ -226,8 +246,15 @@ Rewritten as:
       val validators: Expr[ Seq[ Validator[ T ] ] ] = c.Expr[ Seq[ Validator[ T ] ] ](
         Apply( Select( Ident( newTermName( "Seq" ) ), newTermName( "apply" ) ), rewritten map { _.tree } )
       )
-      reify { new And( validators.splice :_* ) }
 
+      val result: Expr[ Validator[ T ] ] = reify { new And( validators.splice :_* ) }
+      c.info( v.tree.pos,
+        s"""|Result:
+            |  Clean: ${show( result )}
+            |  Raw  : ${showRaw( result )}
+            |""".stripMargin, force = false )
+
+      result
 //      reify { new NilValidator }
     }
 
