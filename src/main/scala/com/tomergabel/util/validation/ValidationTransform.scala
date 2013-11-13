@@ -26,7 +26,7 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
     new Transformer {
       override def transform( subtree: Tree ): Tree =
         if ( pattern isDefinedAt subtree ) pattern.apply( subtree ) else super.transform( subtree )
-    }.transform( tree )
+    }.transform( tree.duplicate )
 
   def defaultCtor( argsToSuper: List[ Tree ] = Nil ) = {
     DefDef(
@@ -59,26 +59,26 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
         abort( t.pos, s"Failed to extract object under validation from tree $t (raw=${showRaw(t)})" )
 
     def rewriteContextExpressionAsValidator( expr: Tree, extractor: Tree ) =
-      transformByPattern( expr ) {
+      context.resetAllAttrs( transformByPattern( expr ) {
         case Apply( t @ TypeApply( Select( _, `contextualizerTerm` ), _ ), e :: Nil ) =>
           Apply( t, extractor :: Nil )
-      }
+      } )
 
     def unapply( expr: Tree ): Option[ Subvalidator ] = expr match {
       case t if t.tpe <:< validatorType =>
         val ( ouv, ouvtpe ) = extractObjectUnderValidation( expr )
         val extractor = Function( prototype, t )
         val sv = rewriteContextExpressionAsValidator( expr, ouv )
-        info( ouv.pos, s"""
-              |Found subvalidator:
-              |  ouv=$ouv
-              |  ouvraw=${showRaw(ouv)}
-              |  ouvtpe=$ouvtpe
-              |  extractor=${show(extractor)}
-              |  extractorraw=${showRaw(extractor)}
-              |  sv=${show(sv)}
-              |  svraw=${showRaw(sv)}
-              |""".stripMargin, force = false )
+//        info( ouv.pos, s"""
+//              |Found subvalidator:
+//              |  ouv=$ouv
+//              |  ouvraw=${showRaw(ouv)}
+//              |  ouvtpe=$ouvtpe
+//              |  extractor=${show(extractor)}
+//              |  extractorraw=${showRaw(extractor)}
+//              |  sv=${show(sv)}
+//              |  svraw=${showRaw(sv)}
+//              |""".stripMargin, force = false )
         Some( Subvalidator( ouv.toString(), extractor, sv, ouvtpe ) )
 
       case _ => None
@@ -99,6 +99,7 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
 
     val applydef = {
       val Function( _, extractorImpl ) = sv.extractor
+      val svtype = appliedType( validatorType.typeConstructor, sv.ouvtpe :: Nil )
       val svdef = ValDef( NoMods, newTermName( "sv" ), TypeTree(), sv.validation )
       val applysel = Apply( Ident( svdef.name ), extractorImpl :: Nil )
 
