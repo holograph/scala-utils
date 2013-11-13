@@ -78,6 +78,9 @@ class PrimitiveValidationTests extends WordSpec with ShouldMatchers {
       val result = validate( legitPerson1 )
       result should be( aSuccess )
     }
+  }
+
+  "classroomValidator" should {
 //    "fail a classroom with no students" in {
 //      val result = validate( classWithNoStudents )
 //      result should failWith( "students has size 0, expected more than 0" )

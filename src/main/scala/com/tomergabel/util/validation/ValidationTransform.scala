@@ -41,6 +41,19 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
     )
   }
 
+  implicit class ListOfExprConversions[ E : WeakTypeTag ]( seq: List[ Expr[ E ] ] ) {
+    def consolidate: Expr[ Seq[ E ] ] =
+      context.Expr[ Seq[ E ] ](
+        Apply( Select( Ident( newTermName( "Seq" ) ), newTermName( "apply" ) ),
+        seq map { _.tree } )
+      )
+  }
+
+
+  private val verboseValidatorRewrite = context.settings.contains( "verboseValidatorRewrite" )
+  def log( s: String, pos: Position = context.enclosingPosition ) =
+    if ( verboseValidatorRewrite ) info( pos, s, force = false )
+
   private val Function( prototype, vimpl ) = v.tree
   if ( prototype.size != 1 )
     abort( prototype.tail.head.pos, "Only single-parameter validators are supported!" )
@@ -51,10 +64,11 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
   private val function1Type = typeOf[ Function1[_,_] ]
   private val contextualizerTerm = typeOf[ builder.Contextualizer[_] ].typeSymbol.name.toTermName
 
+
   private object ValidatorApplication {
     def extractObjectUnderValidation( t: Tree ) =
       extractFromPattern( t ) {
-        case Apply( TypeApply( Select( _, `contextualizerTerm` ), tpe :: Nil ), e :: Nil ) => ( e, tpe.tpe )
+        case Apply( TypeApply( Select( _, `contextualizerTerm` ), tpe :: Nil ), e :: Nil ) => ( context.resetAllAttrs( e.duplicate ), tpe.tpe )
       } getOrElse
         abort( t.pos, s"Failed to extract object under validation from tree $t (raw=${showRaw(t)})" )
 
@@ -67,19 +81,25 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
     def unapply( expr: Tree ): Option[ Subvalidator ] = expr match {
       case t if t.tpe <:< validatorType =>
         val ( ouv, ouvtpe ) = extractObjectUnderValidation( expr )
-        val extractor = Function( prototype, t )
+        val extractor = Function( prototype, ouv )
         val sv = rewriteContextExpressionAsValidator( expr, ouv )
-//        info( ouv.pos, s"""
-//              |Found subvalidator:
-//              |  ouv=$ouv
-//              |  ouvraw=${showRaw(ouv)}
-//              |  ouvtpe=$ouvtpe
-//              |  extractor=${show(extractor)}
-//              |  extractorraw=${showRaw(extractor)}
-//              |  sv=${show(sv)}
-//              |  svraw=${showRaw(sv)}
-//              |""".stripMargin, force = false )
-        Some( Subvalidator( ouv.toString(), extractor, sv, ouvtpe ) )
+        val para = prototype.head.name
+        val desc = ouv match {
+          case Select( Ident( `para` ), selector ) => selector.toString()
+          case _ => ouv.toString()
+        }
+        log( s"""
+              |Found subvalidator:
+              |  ouv=$ouv
+              |  ouvraw=${showRaw(ouv)}
+              |  ouvtpe=$ouvtpe
+              |  extractor=${show(extractor)}
+              |  extractorraw=${showRaw(extractor)}
+              |  sv=${show(sv)}
+              |  svraw=${showRaw(sv)}
+              |  desc=$desc
+              |""".stripMargin, ouv.pos )
+        Some( Subvalidator( desc, extractor, sv, ouvtpe ) )
 
       case _ => None
     }
@@ -94,12 +114,32 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
 
   // Rewrite expressions into a validation chain --
 
+  /**
+    * Each subvalidator of type Validator[ U ] is essentially rewritten as Validator[ T ], similar to:
+    *
+    * ```
+    * val rewriteOne( description: String, extractor: T => U, sv: Validator[ U ] ): Validator[ T ] =
+    *   ( value: T ) => {
+    *     sv( extractor( value ) ) match {
+    *       case Success => Success
+    *       case Failure( violations ) => Failure( violations map prefixWith( description ) )
+    *   }
+    * ```
+    *
+    * Due to Scala macro limitations, in practice the Validator[ T ] is implemented as an anonymous class of type
+    * Function1[ T, Result ], which is instantiated and returned as the expression value.
+    *
+    * @param sv The subvalidator to rewrite
+    * @return A valid expression representing a [[com.tomergabel.util.validation.Validator]] of `T`.
+    */
   private def rewriteOne( sv: Subvalidator ): Expr[ Validator[ T ] ] = {
+
+    // Export the description as a string literal to be spliced in later
     val descExpr = context.Expr[ String ]( Literal( Constant( sv.description ) ) )
 
+    // Define the apply() function body (recall that we're in practice implementing Function1[ T, Result ])
     val applydef = {
-      val Function( _, extractorImpl ) = sv.extractor
-      val svtype = appliedType( validatorType.typeConstructor, sv.ouvtpe :: Nil )
+      val Function( _, extractorImpl ) = sv.extractor   // TODO extractor as a function probably unnecessary. Clean up
       val svdef = ValDef( NoMods, newTermName( "sv" ), TypeTree(), sv.validation )
       val applysel = Apply( Ident( svdef.name ), extractorImpl :: Nil )
 
@@ -118,52 +158,46 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
 
       val applyimpl = Block(
         svdef :: Nil,
-        Ident( newTermName( "Success" ) )//Match( applysel, successCase :: failCase :: Nil )
+        Match( applysel, successCase :: failCase :: Nil )
       )
 
-      DefDef( NoMods, newTermName( "apply" ), Nil,
-        List( prototype ),
-        TypeTree(), applyimpl )
+      DefDef( NoMods, newTermName( "apply" ), Nil, List( prototype ), TypeTree(), applyimpl )
     }
 
+    // Declare the anonymous class and wrapper block
     val anon = newTypeName( context.fresh() )
-    val cdef = ClassDef( NoMods, anon, Nil,
-      Template( TypeTree( appliedType( validatorType.typeConstructor, weakTypeOf[ T ] :: Nil ) ) :: Nil, emptyValDef, defaultCtor() :: applydef :: Nil ) )
+    val vtype = TypeTree( appliedType( validatorType.typeConstructor, weakTypeOf[ T ] :: Nil ) ) :: Nil
+    val cdef = ClassDef( NoMods, anon, Nil, Template( vtype, emptyValDef, defaultCtor() :: applydef :: Nil ) )
     val ctor = Apply( Select( New( Ident( anon ) ), nme.CONSTRUCTOR ), List.empty )
-
     val rewrite = context.Expr[ Validator[ T ] ]( Block( cdef :: Nil, ctor ) )
 
-    info( sv.validation.pos,
-      s"""|Found subvalidator:
-              |  Description: ${sv.description}
-              |  Extractor  : ${sv.extractor}
-              |  Validation : ${sv.validation}
-              |
-              |Rewritten as:
-              |  Clean      : ${show( rewrite )}
-              |  Raw        : ${showRaw( rewrite )}
-              |""".stripMargin, force = false )
+    // Report and return the rewritten validator
+    log( s"""|Subvalidator:
+             |  Description: ${sv.description}
+             |  Extractor  : ${sv.extractor}
+             |  Validation : ${sv.validation}
+             |
+             |Rewritten as:
+             |  Clean      : ${show( rewrite )}
+             |  Raw        : ${showRaw( rewrite )}
+             |""".stripMargin, sv.validation.pos )
     rewrite
   }
 
+  /** Returns the specified validation block, transformed into a single monolithic validator.
+    *
+    * @return The transformed [[com.tomergabel.util.validation.Validator]] of `T`.
+    */
   def transformed: Expr[ Validator[ T ] ] = {
-    val subvalidators = findSubvalidators( vimpl )
-    val rewritten: List[ Expr[ Validator[ T ] ] ] = subvalidators map rewriteOne
+    // Rewrite all validators
+    val subvalidators = findSubvalidators( vimpl ) map rewriteOne
+    val svseq: Expr[ Seq[ Validator[ T ] ] ] = subvalidators.consolidate
+    val result: Expr[ Validator[ T ] ] = reify { new combinators.And( svseq.splice :_* ) }
 
-    //      val validators: Expr[ Seq[ Validator[ T ] ] ] = c.Expr[ Seq[ Validator[ T ] ] ](
-    //        Apply( Select( Ident( newTermName( "Seq" ) ), newTermName( "apply" ) ), rewritten map { _.tree } )
-    //      )
-    //
-    //      val result: Expr[ Validator[ T ] ] = reify { new And( validators.splice :_* ) }
-
-    val result = rewritten.head
-
-    info( vimpl.pos,
-      s"""|Result:
+    log( """|Result of validation transform:
             |  Clean: ${show( result )}
             |  Raw  : ${showRaw( result )}
-            |""".stripMargin, force = false )
-
+            |""".stripMargin )
     result
   }
 }
