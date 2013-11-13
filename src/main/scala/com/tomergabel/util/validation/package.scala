@@ -81,14 +81,20 @@ package object validation {
       def has( validator: Validator[ U ] ) = validator
       def have( validator: Validator[ U ] ) = validator
 
-      def are[ E ]( implicit ev: U <:< Traversable[ E ] ) = new {
+      class TraversableExtensions[ E ]( implicit ev: U <:< Traversable[ E ] ) {
         private def aggregate( validator: Validator[ E ], aggregator: Traversable[ Result ] => Result ) = new Validator[ U ] {
           def apply( col: U ) = aggregator( ev( col ) map validator )
         }
 
         def all( validator: Validator[ E ] ): Validator[ U ] = aggregate( validator, r => ( r fold Success )( _ and _ ) )
       }
+
+      def are[ E ]( implicit ev: U <:< Traversable[ E ] ) = new TraversableExtensions[ E ]
+      def each[ E ]( implicit ev: U <:< Traversable[ E ] ) = new TraversableExtensions[ E ] {
+        def is( validator: Validator[ E ] ): Validator[ U ] = all( validator )
+      }
     }
+
     implicit class ExtendValidator[ T ]( validator: Validator[ T ] ) {
       def and( other: Validator[ T ] ) = new And( validator, other ) // TODO shortcut multiple ANDs
       def or( other: Validator[ T ] ) = new Or( validator, other )   // TODO shortcut multiple ORs

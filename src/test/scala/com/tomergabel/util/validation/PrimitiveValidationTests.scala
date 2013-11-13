@@ -20,7 +20,7 @@ object PrimitiveValidationTests {
 
   implicit val classValidator = validator[ Classroom ] { c =>
     c.teacher is valid
-    c.students.are all valid
+    c.students.each is valid
     c.students have size > 0
   }
 }
