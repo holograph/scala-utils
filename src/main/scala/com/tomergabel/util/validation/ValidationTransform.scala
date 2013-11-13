@@ -50,7 +50,7 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
   }
 
 
-  private val verboseValidatorRewrite = context.settings.contains( "verboseValidatorRewrite" )
+  private val verboseValidatorRewrite = context.settings.contains( "verboseValidationTransform" )
   def log( s: String, pos: Position = context.enclosingPosition ) =
     if ( verboseValidatorRewrite ) info( pos, s, force = false )
 
@@ -68,7 +68,8 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
   private object ValidatorApplication {
     def extractObjectUnderValidation( t: Tree ) =
       extractFromPattern( t ) {
-        case Apply( TypeApply( Select( _, `contextualizerTerm` ), tpe :: Nil ), e :: Nil ) => ( context.resetAllAttrs( e.duplicate ), tpe.tpe )
+        case Apply( TypeApply( Select( _, `contextualizerTerm` ), tpe :: Nil ), e :: Nil ) =>
+          ( context.resetAllAttrs( e.duplicate ), tpe.tpe )
       } getOrElse
         abort( t.pos, s"Failed to extract object under validation from tree $t (raw=${showRaw(t)})" )
 
@@ -166,8 +167,8 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
 
     // Declare the anonymous class and wrapper block
     val anon = newTypeName( context.fresh() )
-    val vtype = TypeTree( appliedType( validatorType.typeConstructor, weakTypeOf[ T ] :: Nil ) ) :: Nil
-    val cdef = ClassDef( NoMods, anon, Nil, Template( vtype, emptyValDef, defaultCtor() :: applydef :: Nil ) )
+    val vtype = TypeTree( appliedType( validatorType.typeConstructor, weakTypeOf[ T ] :: Nil ) )
+    val cdef = ClassDef( NoMods, anon, Nil, Template( vtype :: Nil, emptyValDef, defaultCtor() :: applydef :: Nil ) )
     val ctor = Apply( Select( New( Ident( anon ) ), nme.CONSTRUCTOR ), List.empty )
     val rewrite = context.Expr[ Validator[ T ] ]( Block( cdef :: Nil, ctor ) )
 
@@ -194,10 +195,10 @@ private class ValidationTransform[ C <: Context, T : C#WeakTypeTag ]( val contex
     val svseq: Expr[ Seq[ Validator[ T ] ] ] = subvalidators.consolidate
     val result: Expr[ Validator[ T ] ] = reify { new combinators.And( svseq.splice :_* ) }
 
-    log( """|Result of validation transform:
-            |  Clean: ${show( result )}
-            |  Raw  : ${showRaw( result )}
-            |""".stripMargin )
+    log( s"""|Result of validation transform:
+             |  Clean: ${show( result )}
+             |  Raw  : ${showRaw( result )}
+             |""".stripMargin )
     result
   }
 }
